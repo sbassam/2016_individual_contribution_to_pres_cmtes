@@ -1,0 +1,545 @@
+---
+title: "P4: Exploring Individual Contributions to Campaign Committees of 2016 Presidential Candidates: Trump, and Clinton"
+output: html_document
+---
+
+
+#Intro
+
+In this project, I'll be examining 2016 presidential campaign finance data. specifically, I'll be looking at individual contributions made to two party nominees' campaign committee, Hillary for America, and Trump for President.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, packages}
+# Load all of the packages that you end up using
+# in your analysis in this code chunk.
+
+# Notice that the parameter "echo" was set to FALSE for this code chunk.
+# This prevents the code from displaying in the knitted HTML output.
+# You should set echo=FALSE for all code chunks in your file.
+
+library(ggplot2)
+library(dplyr)
+library(knitr)
+library(GGally)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Load_the_Data}
+# Load the Data
+Contributions <- read.table("Contributions_Raw.txt",
+                 header = FALSE,
+                 sep="\t",
+                 col.names = c("candname", "campaign", "ContribID", "State", "zip", "date", "amount", "gender"))
+```
+
+Once packages and data are loaded, I Add a rowID column to dataset. Note that ContribID is unique to each person (contributor), but anyone could make multiple donations, I need to have a rowID for each unique transaction.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Process_data}
+#add rowID
+Contributions$rowID<-seq.int(nrow(Contributions))
+
+#converting date to a recognized date type.
+Contributions$date <- as.Date(Contributions$date)
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Make_Sample}
+# make a sample to reduce processing time when prototying
+set.seed(2330)
+Sample <- Contributions[sample(1:nrow(Contributions), 1000,
+                          replace=FALSE),]
+
+```
+
+##Structure of dataset
+The following is the structure of the dataset. Take a look at few rows:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#take a look
+head(Contributions)
+
+```
+
+Here's a summary statistics:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#data description can be found in datadesc.txt.
+summary(Contributions)
+```
+
+Notes:
+   The ContribId p0004665299 is definitely an outlier. Donating 1520 times, 
+   each time $1 is unrealistic/unimportant.
+   This project examines donations from 2015-04-07 to 2016-10-19.
+   A negative amount indicates a refund, and is beyond the scope of this study.
+   Therefore, they will not be considered.
+   The only values we care about in the gender column are F (Female) 
+   and M (Male).
+
+The following dataframe is grouped_by_contrib, a dataset that groups transactions by contributors (represented by unique ContribIDs). 
+So we get the total amount each person has contributed as well as 
+number of contributions s/he's made.
+
+total = total amount of money someone donated.
+n = number of donations
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, group_by_conributor}
+#group by contributors. That gives total amount for each contributor. 
+grouped_by_contrib <- group_by(subset(Contributions, Contributions$amount > 0), ContribID)
+Contrib.by_ContribID <- summarise(grouped_by_contrib,
+                                 total = sum(amount),
+                                 n = n())
+head(Contrib.by_ContribID)
+summary(Contrib.by_ContribID)
+#total = total amount of money someone donated.
+#n = number of donations
+```
+
+# Exploring Univariate and Bivariate Variables
+
+It'd be interesting to see how variables like total amount, 
+gender, zip, etc. are distributed. So, I'll start with 
+plotting histograms.
+
+#### 1. histogram of total contributions
+Since individual donation limit per election is $2700 I limited the x axis.
+First, let's take a look at the sample as it takes less time to compile. 
+Note: This dataset is not aggregated over contributors, 
+so it's just showing distribution of amount.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, total_amount_histogram_sample_data}
+ggplot(aes(x = amount), data = Sample)+
+  geom_histogram(binwidth = 50, color = 'black', fill = '#F79420')+
+  xlim(0, 2700)+
+  ylim(0,300)
+```
+
+Now, let's take a look at our aggregated dataset where each row 
+represents a unique contributor.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, total_amount_histogram_aggregated_data}
+#get a summary:
+summary(Contrib.by_ContribID$total)
+#Now, plot
+ggplot(aes(x = total), data = Contrib.by_ContribID)+
+  geom_histogram(binwidth = 100, color = 'black', fill = '#F79420')+
+  xlim(0, quantile(Contrib.by_ContribID$total, 0.99))
+```
+
+zoom into the range 0-500 (since median is 200, and 3rd Qu is 500)
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, total_amount_histogram_zoom}
+ggplot(aes(x = total), data = Contrib.by_ContribID)+
+  geom_histogram(binwidth = 10, color = 'black', fill = '#F79420')+
+  xlim(0, 500)
+```
+
+#### 2. Histogram of contribution count
+In this section, I look at how the count of donations for individuals is distributed
+using Contrib.by_ContribID dataset created earlier, 
+let's look at the number of donations of each individual
+```{r echo=FALSE, message=FALSE, warning=FALSE,}
+summary(Contrib.by_ContribID$n)
+```
+
+plot: set the xlim to get rid of the $1520 outlier
+
+n: count of donations per person.
+```{r echo=FALSE, message=FALSE, warning=FALSE, count_of_donation_histogram}
+ggplot(aes(x = n), data = Contrib.by_ContribID)+
+  geom_histogram(binwidth = 1)+
+  xlim(0, quantile(Contrib.by_ContribID$n, 0.99))
+```
+
+observation 1: mean is pulled by the outliers. max of 1520 is definitely an outlier
+observation 2: data is right skewed because the mean is far away from median.
+observation 3: someone donated $1 amount for 1520 times!
+observation 4: most people had 1-5 contributions.
+
+
+#### 3. Total donations trend
+Maybe it makes more sense to look at the total amount of donations/day
+rather than number of donations/day, because we eventually care about the money spent.
+
+The first step is to group the donations by date. Then, I add a new column called don_month which contains 
+the month of donation.
+
+I'd expect to see an exponential histogram because candidates recieve more donations as it gets closer to the election day.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, aggregated_by_date}
+# Create dataset grouped by date
+grouped_by_date <- group_by(subset(Contributions, Contributions$amount > 0), date)
+Contrib.by_date <- summarise(grouped_by_date,
+                                  total = sum(amount),
+                                  n = n())
+#convert to date:
+
+Contrib.by_date$date <-  as.Date(Contrib.by_date$date)
+
+
+# Create a new column to represent month of donation -- don_month...Convert to right data-type
+# Contrib.by_date$don_month <-  as.Date(Contrib.by_date$date,'%m/%d/%Y')
+# Contrib.by_date$don_month <- as.numeric(format(Contrib.by_date$don_month,'%m%Y'))
+# Contrib.by_date$month_yr <- format(as.Date(Contrib.by_date$date), "%Y-%m")
+# 
+# Contrib.by_date$Month_Yr <- as.Date(Contrib.by_date$date)
+# Contrib.by_date$Month_Yr <- format(as.Date(Contrib.by_date$Month_Yr), "%Y-%m")
+# 
+# Contrib.by_date$don_year <-  as.Date(Contrib.by_date$date,'%m/%d/%Y')
+# Contrib.by_date$don_year <- as.numeric(format(Contrib.by_date$don_year,'%Y'))
+# 
+# Contrib.by_date$don_month <-  as.Date(Contrib.by_date$date,'%m/%d/%Y')
+# Contrib.by_date$don_month <- as.numeric(format(Contrib.by_date$don_month,'%m'))
+# 
+# head(Contrib.by_date)
+
+# Now, group by dob_month:
+# grouped_by_month <- group_by(Contrib.by_date, don_year, don_month)
+# Contrib.by_month <- summarise(grouped_by_month,
+#                                   total = sum(total),
+#                                   n = n())
+# 
+# head(Contrib.by_month)
+# summary(Contrib.by_date)
+# 
+# Contrib.by_month$don_month <- as.Date(Contrib.by_month$don_month)
+# Contrib.by_month$don_year <- as.Date(Contrib.by_month$don_year)
+
+head(Contrib.by_date)
+```
+
+where n is number of donations per day, and total is the sum of donations per day.
+Here's a bar chart of daily total donations.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = date , y = total), data = Contrib.by_date)+
+  geom_bar(stat = 'identity')+
+  scale_x_date(date_breaks = '3 months')
+
+
+```
+
+Too noisy. Let's try a bar chart with a better aggregation:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Create new variable to aggregate over month
+Contrib.by_date$Month_Yr <- format(as.Date(Contrib.by_date$date, "%d-%b-%y"), "%Y-%m")
+Contrib.by_date$Month_Yr <- as.factor(Contrib.by_date$Month_Yr)
+
+
+ggplot(aes(x = Month_Yr , y = total), data = Contrib.by_date)+
+  geom_bar(stat = 'identity')+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+#### 4. Total donations VS State
+The goal here is to compare top 10 states with highest total donations. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# group by state:
+grouped_by_state <- group_by(subset(Contributions, Contributions$amount > 0), State)
+Contrib.by_state <- summarise(grouped_by_state,
+                                  total = sum(amount),
+                                  n = n())
+#sort data
+
+Contrib.by_state <- Contrib.by_state[order(Contrib.by_state$total, decreasing = TRUE),]
+Contrib.by_state$State <- as.character(Contrib.by_state$State)
+
+# draw a bar chart
+ggplot(aes(x = State , y = total), data = head(Contrib.by_state, 10))+
+  scale_y_continuous(labels = scales::dollar)+
+  geom_bar(stat = 'identity')
+```
+
+I'm not surprised to see CA and NY as top spending states. IL is interestingly on the list.
+
+
+#### 5. Total Donations VS Zip
+
+Here's a bar chart showing 20 zip codes with highest individual contributions.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# group by zip:
+grouped_by_zip <- group_by(subset(Contributions, (Contributions$amount > 0) & (Contributions$zip != '')), zip)
+Contrib.by_zip <- summarise(grouped_by_zip,
+                                  total = sum(amount),
+                                  n = n())
+#sort data
+
+Contrib.by_zip <- Contrib.by_zip[order(Contrib.by_zip$total, decreasing = TRUE),]
+
+# draw a bar chart
+ggplot(aes(x = zip , y = total), data = head(Contrib.by_zip, 20))+
+  geom_bar(stat = 'identity')+
+  scale_y_continuous(labels = scales::dollar)+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+Highest contribution totals are from CA, NY, and DC. This makes sense when you compare this chart against household income where these zip codes show up amongst the highest. 
+
+#### 6. Comparing Trump and Clinton numbers based on contributors' gender
+Next, let's break the data down based on gender. This is important, particularly because Hillary's campaign was mainly built around gender equality. I'd assume more women supported Hillary as they wanted to support a woman so their voice can be better heard.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# group by gender:
+grouped_by_gender <- group_by(subset(Contributions, 
+                                     Contributions$amount > 0 
+                                       & (Contributions$gender == "F"
+                                          | Contributions$gender == "M")), 
+                              candname, gender)
+                          
+Contrib.by_gender <- summarise(grouped_by_gender,
+                                  total = sum(amount),
+                                  n = n())
+#sort data
+Contrib.by_gender <- Contrib.by_gender[order(Contrib.by_gender$total, decreasing = TRUE),]
+
+ggplot(aes(x = gender , y = total), data = head(Contrib.by_gender, 20))+
+  geom_bar(stat = 'identity')+
+  scale_y_continuous(labels = scales::dollar)+
+  facet_wrap(~candname)
+```
+
+Obviously, Clinton raised way more money than Trump did, and that regardless of gender.
+Here's my main takeaway: proportion of female to male contributors is way higher for Hillary than it is for Trump. 
+
+
+# Multivariate Plots Section
+
+Based on prevoius findings, I'd like to learn more about:
+
+  1- How the number of donations is related to the amount of donation for each unique donor?
+  2- Total donation trends over time based on gender
+  3- Total donation trends over time based on candidates
+  4- Number of donation trends over time based on gender
+  5- Number of donation trends over time based on candidates
+  
+1- To answer the first question, I need to create the appropriate data-set.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Multivariate_Plots}
+# data
+df <- subset(Contributions, Contributions$amount > 0 & (Contributions$gender == "F" | Contributions$gender =="M"))
+
+# group by contributor, gender, and candidate
+grouped_by_contrib_cand_gen <- group_by(df, ContribID, gender, candname)
+Contrib.by_contrib_cand_gen <- summarise(grouped_by_contrib_cand_gen,
+                                  total = sum(amount),
+                                  n = n())
+head(Contrib.by_contrib_cand_gen)
+```
+
+Now, let's take a look at total amount VS count of donations for each contributors.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = total, y = n ), data = Contrib.by_contrib_cand_gen)+
+  geom_point()
+```
+
+Getting rid of outliers, adjusting axes, using alpha, etc. Here's the result:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = total, y = n ), data = Contrib.by_contrib_cand_gen)+
+  geom_point(alpha = 1/100)+
+  #scale_y_discrete(limits = c(0, quantile(Contrib.by_contrib_cand_gen$n, 0.95)))+
+  #scale_y_log10(limits = c(1, 10))+
+  xlim(0, quantile(Contrib.by_contrib_cand_gen$total, 0.99))+
+  ylim(0, quantile(Contrib.by_contrib_cand_gen$n, 0.95))
+```
+
+Interesting! We can see that as the total increases, the number of uniques contributors decrease. Also, as the number of donations increase, the number of high donation contributors decrease.
+
+2- Similar to the previous question, we first need to create the aggregated dataset. This time, aggregated by date instead of ContribID.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# group by date, candidate, and gender
+grouped_by_date_cand_gen <- group_by(df, date, gender, candname)
+Contrib.by_date_cand_gen <- summarise(grouped_by_date_cand_gen,
+                                  total = sum(amount),
+                                  n = n(),
+                                  donation_median = median(amount))
+# Convert date column from fctr to date
+Contrib.by_date_cand_gen$date <- as.Date(Contrib.by_date_cand_gen$date)
+```
+
+We can see the trend in total donations daily, broken down based on gender.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = date, y = total ), data = Contrib.by_date_cand_gen)+
+  geom_line(aes(color = gender), stat = 'summary', fun.y = median)+
+  #scale_y_discrete(limits = c(0, quantile(Contrib.by_contrib_cand_gen$n, 0.95)))+
+  #scale_y_log10(limits = c(1, 10))+
+  #xlim(0, round(quantile(Contrib.by_date_cand_gen$date, 0.99)))+
+  ylim(0, quantile(Contrib.by_date_cand_gen$total, 0.95))
+```
+
+It's hard to compare M to F in this graph, but as you can see overall they both decrease and increase again.
+
+3- Similar to previous step, this time we need to take into acount the recipient of the donation
+
+```{r echo=FALSE, message=FALSE, warning=FALSE }
+ggplot(aes(x = date, y = total ), data = Contrib.by_date_cand_gen)+
+  geom_line(aes(color = candname), stat = 'summary', fun.y = median)
+```
+
+It looks like we need to change the y scale to log. Also, need to add smooth line
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = date, y = total ), data = Contrib.by_date_cand_gen)+
+  geom_line(aes(color = candname), stat = 'summary', fun.y = median)+
+  scale_y_log10()
+```
+
+Seems like Clinton was almost always heads and shoulders higher than Trump. However, there's a big spike for Trump around June, 2016. 
+
+
+4- Use count of donations (aggregated per day) instead of sum of donations
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = date, y = n ), data = Contrib.by_date_cand_gen)+
+  geom_line(aes(color = candname), stat = 'summary', fun.y = median)+
+  scale_y_log10()
+```
+
+5- Looking at count of donations over time, based on gender
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = date, y = n ), data = Contrib.by_date_cand_gen)+
+  geom_line(aes(color = gender), stat = 'summary', fun.y = median)+
+  scale_y_log10()+
+  geom_smooth()
+```
+
+Let's look at count vs. amount based on candidates:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = total, y = n ), data = Contrib.by_date_cand_gen)+
+  geom_point(aes(color = candname), 
+             stat = 'summary', fun.y = median, alpha = 1/2)+
+  scale_y_log10(limits = c(1, quantile(Contrib.by_date_cand_gen$n, 0.99)))+
+  geom_smooth()+
+  xlim(0, quantile(Contrib.by_date_cand_gen$total, 0.99))
+```
+
+My final curiosity for this part is to see if donors of a particular candidate have different trends based on gender. I'll be looking at both count, and amount:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = date, y = n ), 
+       data = subset(Contrib.by_date_cand_gen, 
+                     Contrib.by_date_cand_gen$candname == 'Trump, Donald'))+
+  geom_line(aes(color = gender), stat = 'summary', fun.y = median)+
+  scale_y_log10()
+```
+
+As expected, count of donations from male is almost always higher.
+
+# Final Plots and Summary
+
+### Plot One: total donations trend over time, by gender, and candidate
+```{r echo=FALSE, message=FALSE, warning=FALSE, total_donation_distribution_based_on_gender_candname}
+df <- subset(Contributions, Contributions$amount > 0 & 
+               (Contributions$gender == "F" | Contributions$gender ==   "M"))
+
+df$Month_Yr <- format(as.Date(df$date, "%d-%b-%y"), "%Y-%m")
+df$Month_Yr <- as.factor(df$Month_Yr)
+
+grouped_by_monthly_cand_gen <- group_by(df, Month_Yr, gender, candname)
+Contrib.by_monthly_cand_gen <- summarise(grouped_by_monthly_cand_gen,
+                                 total = sum(amount),
+                                 n = n(),
+                                 donation_median = median(amount))
+
+# to reduce the noise, I add a new column to store the month-year for each row and use it to plot.
+# Contrib.by_date_cand_gen$Month_Yr <- format(as.Date(Contrib.by_date_cand_gen$date, "%d-%b-%y"), "%Y-%m")
+# Contrib.by_date_cand_gen$Month_Yr <- as.factor(Contrib.by_date_cand_gen$Month_Yr)
+
+# trump <- subset(Contrib.by_monthly_cand_gen, Contrib.by_monthly_cand_gen$candname == 'Trump, Donald')
+# clinton <- subset(Contrib.by_monthly_cand_gen, Contrib.by_monthly_cand_gen$candname == 'Clinton, Hillary')
+# 
+# ggplot(aes(x = Month_Yr, y = total, group = gender), data = trump)+
+#   geom_line(aes(color = gender), stat = 'identity')+
+#   geom_line(data = clinton, aes(color = gender), stat = 'identity')
+#   scale_y_log10()+
+
+#   
+# 
+# plt2 <- ggplot(aes(x = Month_Yr, y = total, group = gender), data = clinton)+
+#   geom_line(aes(color = gender), stat = 'identity')+
+#   scale_y_log10(limits = c(1, 1000000000))
+
+# Trying out a bunch of different ways, I think this is the most efficient way to do it:
+Contrib.by_monthly_cand_gen$category <- NA
+Contrib.by_monthly_cand_gen$category[Contrib.by_monthly_cand_gen$candname == "Trump, Donald" & Contrib.by_monthly_cand_gen$gender == 'M'] <- "Trump - Male"
+Contrib.by_monthly_cand_gen$category[Contrib.by_monthly_cand_gen$candname == "Trump, Donald" & Contrib.by_monthly_cand_gen$gender == 'F'] <- "Trump - Female"
+Contrib.by_monthly_cand_gen$category[Contrib.by_monthly_cand_gen$candname == "Clinton, Hillary" & Contrib.by_monthly_cand_gen$gender == 'M'] <- "Clinton - Male"
+Contrib.by_monthly_cand_gen$category[Contrib.by_monthly_cand_gen$candname == "Clinton, Hillary" & Contrib.by_monthly_cand_gen$gender == 'F'] <- "Clinton - Female"
+
+
+ggplot(aes(x = Month_Yr, y = total/1000000, group = category), data = Contrib.by_monthly_cand_gen)+
+  geom_line(aes(color = category), stat = 'identity')+
+  scale_y_log10(breaks = c(0.01, 0.1, 1.0, 10.0, 100.0), labels = scales::dollar)+
+  scale_color_manual(values=c("#D55E00", "#0072B2", "#E69F00", "#56B4E9"))+
+  ggtitle("Amount of Donations' Trend by Gender, Candidate") +
+  labs(x = "Date", y = "Amount of Donations (Million Dollars)")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+### Description One
+
+One insight this graph captures is that even though male donors contributed a higher amount to Clintons campaign, female donors had a higher rate starting 2016 through the month of July. Conversely, male donors to Trump have a consistently higher totals compared to female donors. The most notable spike in contributions to Trump happens throughout April, 2016 until July, 2016, whereas contributions to Clinton --except for the early drop-- is consitently increasing.
+
+### Plot Two: Count of Donations' Trend over Time by Gender, and Candidate
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, count_of_donation_distribution_based_on_gender_candname}
+ggplot(aes(x = Month_Yr, y = n, group = category), data = Contrib.by_monthly_cand_gen)+
+  geom_line(aes(color = category), stat = 'identity')+
+  scale_y_log10(breaks = c(1, 10, 100, 1000, 10000, 100000), labels = scales::comma)+
+  scale_color_manual(values=c("#D55E00", "#0072B2", "#E69F00", "#56B4E9"))+
+  ggtitle("Count of Donations' Trend by Gender, Candidate") +
+  labs(x = "Date", y = "Count of Donations") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+```
+
+### Description Two
+This graph is somewhat similar to the previous graph in terms of the overall pattern. The lines representing donations to Clinton, are more separated than the lines in the previous graph. Also, the line representing female donors to Clinton is consistently showing a higher rate.
+
+The spike in Trumps donations stands out in this graph, too.
+
+### Plot Three
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Plot_Three}
+ggplot(aes(x = total, y = n ), data = Contrib.by_date_cand_gen)+
+  geom_point(aes(color = candname), stat = 'summary', fun.y = median, alpha = 1/2)+
+  scale_y_log10(limits = c(1, quantile(Contrib.by_date_cand_gen$n, 0.99)), breaks = c(1, 10, 100, 1000, 10000))+
+  geom_smooth()+
+  #xlim(0, quantile(Contrib.by_date_cand_gen$total, 0.99))+
+  scale_color_manual(values=c("#56B4E9", "#D55E00"))+
+  theme_bw()+
+  ggtitle("Count VS Amount of Donations Per Day") +
+  labs(x = "Total Amount of Donations Per Day", y = "Count of Donations Per Day")+
+  scale_x_continuous(labels = scales::comma, limits = c(0, quantile(Contrib.by_date_cand_gen$total, 0.99)), 
+                     breaks = seq(0, 2000000, 250000))
+```
+
+### Description Three
+
+Each dot represents a day with its y-value being number of donations on that day as well as x-value beign total amount of contribution. As the count of donation goes up, total amount increases, but that's no surprise as x value is basically the accumulation of money contributed. What I find insightful here is that, although Trump's campaign raised less money, if we zoom in the < 100,000 dollars, it seems they outnumbered Clinton's in terms of number of donations. One could argue it's the amount of money that matters to candidates at the end of the day, but I believe how many times people donated can indicate how willing they are to help their candidate of choice win. How much money they contribute, is more dependent on how well they are doing financially. As we look at higher totals, Trump donations fade away. This suggests Clinton have attracted richer population. When we look at a specific count say, 100, we see Trump donors have a lower total. Conversely, when you look at a fixed total, say 50,000 dollars, you see Trumps donor have a higher count. This supports the previous hypothesis.  
+
+# Reflection
+The spike in contribution to Trump is notable in both amount and count charts. I'm still researching about what might have caused this. From what I've gathered so far, it seems like he started a really successful fundraising around June in Texas.
+
+There are two factors I tried to ephasize on: amount and count. My conclusion from these graphs is that amount is more an indicator of how successful a campaign is in raising money, whereas count can be attributed to citizens' support for their particular choice. if a candidate has a high count of donation with a low amount (kind of like what Trump had), that means a lot of people were willing to support, and that the campaign successfully attracted the voters, but maybe the ones with lower income.
+
+In conclusion, I think it's important to separate count of donations from amount the better understand contributors' behaviour, as well as campaign performance. 
+
+
+Although this study can give a better understanding of the dynamic of individual contributions to these campaigns, a lot more work needs to be done in order for us to draw conclusions. Firstly, these findings are not suggesting a causal relationship as that can be established by setting up an experiment only. Rather, this is an attempt to explore patterns and trends hidden in the data.
+
+Some future step could potentially include adding in US household income data to compare it against contribution based on location. States like California and New york had the highest contributions, but would they still be if we normalized contribution using income data? 
+
+
+
+
+NOTE: THIS DATA WAS ACQUIRED FROM OPENSECRETS.ORG. NOT FOR COMMERCIAL USES.
