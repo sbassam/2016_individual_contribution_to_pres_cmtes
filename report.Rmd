@@ -1,6 +1,9 @@
 ---
-title: "P4: Exploring Individual Contributions to Campaign Committees of 2016 Presidential Candidates: Trump, and Clinton"
-output: html_document
+title: "P4: Exploring Individual Contributions to Campaign Committees of 2016 Presidential
+  Candidates: Trump, and Clinton"
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 
@@ -143,6 +146,8 @@ summary(Contrib.by_ContribID$n)
 plot: set the xlim to get rid of the $1520 outlier
 
 n: count of donations per person.
+
+
 ```{r echo=FALSE, message=FALSE, warning=FALSE, count_of_donation_histogram}
 ggplot(aes(x = n), data = Contrib.by_ContribID)+
   geom_histogram(binwidth = 1)+
